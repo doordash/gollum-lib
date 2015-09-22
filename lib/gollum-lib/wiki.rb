@@ -1,4 +1,6 @@
 # ~*~ encoding: utf-8 ~*~
+require 'shellwords'
+
 module Gollum
   class Wiki
     include Pagination
@@ -610,11 +612,22 @@ module Gollum
         results[file_name] = count.to_i
       end
 
-      # Use git ls-files '*query*' to search for file names. Grep only searches file content.
-      # Spaces are converted to dashes when saving pages to disk.
-      @repo.git.ls_files(query.gsub(' ','-'), options).each do |path|
-        # Remove ext only from known extensions.
-        file_name          = Page::valid_page_name?(path) ? path.chomp(::File.extname(path)) : path
+      # Search for filenames (use git ls-files to get list of all files)
+      # Partially based on gollum-grit_adapter-1.0.0 (git_layer_grit.rb), but using its
+      # "@git" object directly
+
+      query = query.gsub(' ', '-')      # Files are saved with dashes
+      query = Shellwords.shellescape(query)
+
+      # Get the underlying "git" object in Grit, to do our ls_files
+      git_client = @repo.git.instance_variable_get('@git')
+
+      # Do the string matching ourselves, "git ls-files" doesn't support case-insensitive
+      files = git_client.ls_files({}, ref, "*").split("\n")
+      files = files.select{|x| /#{query}/i.match(x)}
+
+      files.each do |path|
+        file_name = Page::valid_page_name?(path) ? path.chomp(::File.extname(path)) : path
         # If there's not already a result for file_name then
         # the value is nil and nil.to_i is 0.
         results[file_name] = results[file_name].to_i + 1;
@@ -646,7 +659,7 @@ module Gollum
       options[:max_count] = 10 unless options[:max_count]
       @repo.log(@ref, nil, options)
     end
-    
+
     # Public: Refreshes just the cached Git reference data.  This should
     # be called after every Gollum update.
     #
